@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AR Fruit Ninja</title>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Boogaloo&family=Press+Start+2P&display=swap" rel="stylesheet" />
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+  <!-- React 18 -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+  <!-- Babel (for JSX in-browser) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; cursor: crosshair !important; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .btn {
+      border: none; font-family: 'Boogaloo', sans-serif; color: white; border-radius: 9999px;
+      cursor: crosshair; transition: transform 0.1s; font-size: 32px; padding: 16px 36px;
+    }
+    .btn:hover { transform: scale(1.07); }
+    .btn:active { transform: scale(0.95); }
+    .btn-classic { background: linear-gradient(to bottom, #ffcc00, #ff9900); box-shadow: 0 0 22px #ffcc00; -webkit-text-stroke: 1px #b36b00; }
+    .btn-zen    { background: linear-gradient(to bottom, #33ccff, #0099cc); box-shadow: 0 0 22px #33ccff; -webkit-text-stroke: 1px #006699; }
+    .btn-arcade { background: linear-gradient(to bottom, #ff3366, #cc0033); box-shadow: 0 0 22px #ff3366; -webkit-text-stroke: 1px #990022; }
+    .btn-menu   { background: linear-gradient(to bottom, #66cc33, #339900); box-shadow: 0 0 30px #66cc33; -webkit-text-stroke: 2px #226600; font-size: 34px; padding: 16px 52px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useRef, useState } = React;
+
+    /* ─── helpers ───────────────────────────────────────────── */
+    function lineCircleIntersection(x1, y1, x2, y2, cx, cy, r) {
+      const dx = x2 - x1, dy = y2 - y1;
+      const fx = x1 - cx, fy = y1 - cy;
+      const a = dx*dx + dy*dy;
+      const b = 2*(fx*dx + fy*dy);
+      const c = fx*fx + fy*fy - r*r;
+      let disc = b*b - 4*a*c;
+      if (disc < 0) return false;
+      disc = Math.sqrt(disc);
+      const t1 = (-b - disc) / (2*a);
+      const t2 = (-b + disc) / (2*a);
+      return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
+    }
+
+    /* ─── data ──────────────────────────────────────────────── */
+    const colors = {
+      watermelon: ['#ff3333','#33cc33'], orange: ['#ff9900','#ffcc00'],
+      apple: ['#ff3333','#ccff33'],      banana: ['#ffff33','#ffffcc'],
+      lemon: ['#ffff33','#ccff33'],      bomb: ['#ff0000','#ff9900','#ffff00','#333333'],
+      pineapple: ['#FFD700','#FF9900','#33AA00'], mango: ['#FF9900','#FFD700','#FF6600'],
+      strawberry: ['#FF3366','#FF6699','#FFFFFF'], peach: ['#FFCC99','#FF9966','#FFB347'],
+      grapes: ['#9933FF','#CC66FF','#6600CC'],    kiwi: ['#66CC33','#33AA00','#A0522D'],
+      cherry: ['#CC0000','#FF0033','#FFB6C1'],    blueberry: ['#3366FF','#6699FF','#0000CC'],
+      star: ['#FFD700','#FFFFFF','#FFCC00','#FF9900'],
+      ice: ['#99CCFF','#FFFFFF','#66AAFF'],
+      diamond: ['#99CCFF','#FFFFFF','#FFD700'],
+    };
+
+    const emojis = {
+      watermelon:'🍉', orange:'🍊', apple:'🍎', banana:'🍌', lemon:'🍋', bomb:'💣',
+      pineapple:'🍍', mango:'🥭', strawberry:'🍓', peach:'🍑', grapes:'🍇', kiwi:'🥝',
+      cherry:'🍒', blueberry:'🫐', star:'⭐', ice:'🧊', diamond:'💎',
+    };
+
+    const fruitGlow = {
+      watermelon:'#FF3333', orange:'#FF9900', apple:'#FF3333',
+      banana:'#FFFF33',     lemon:'#FFFF33',  bomb:'#FF4400',
+      pineapple:'#FFD700',  mango:'#FF9900',  strawberry:'#FF3366',
+      peach:'#FFCC99',      grapes:'#9933FF', kiwi:'#66CC33',
+      cherry:'#CC0000',     blueberry:'#3366FF', star:'#FFD700',
+      ice:'#99CCFF',        diamond:'#99CCFF',
+    };
+
+    /* ─── component ─────────────────────────────────────────── */
+    function Game() {
+      const videoRef  = useRef(null);
+      const canvasRef = useRef(null);
+      const reqRef    = useRef(0);
+
+      const [isReady, setIsReady]   = useState(false);
+      const [camErr,  setCamErr]    = useState(false);
+
+      // game state refs (not React state — updated every frame)
+      const gamePhase = useRef('idle');   // idle | playing | gameover
+      const gameMode  = useRef('classic'); // classic | zen | arcade
+      const score     = useRef(0);
+      const lives     = useRef(3);
+      const highScore = useRef(parseInt(localStorage.getItem('fruitNinjaHS') || '0', 10));
+
+      const stats = useRef({ sliced:0, missed:0, maxCombo:0, bombsHit:0 });
+
+      const [ui, setUi] = useState({
+        phase:'idle', mode:'classic', score:0, lives:3, bombsSliced:0,
+        highScore: parseInt(localStorage.getItem('fruitNinjaHS') || '0', 10),
+        stats: { sliced:0, missed:0, maxCombo:0, bombsHit:0 },
+      });
+
+      // object arrays
+      const fruits       = useRef([]);
+      const particles    = useRef([]);
+      const floatTexts   = useRef([]);
+      const stains       = useRef([]);
+      const flashes      = useRef([]);
+      const trail        = useRef([[], []]);   // one trail per hand
+      const lastDetTimes = useRef([0, 0]);
+
+      // counters / timers
+      const combo             = useRef(0);
+      const lastSliceT        = useRef(0);
+      const spawnInterval     = useRef(2000);
+      const lastSpawnT        = useRef(0);
+      const bombFlashT        = useRef(0);
+      const bombsSliced       = useRef(0);
+      const arcadeStart       = useRef(0);
+      const fever             = useRef(false);
+      const feverT            = useRef(0);
+      const freezeActive      = useRef(false);
+      const freezeT           = useRef(0);
+      const doubleActive      = useRef(false);
+      const doubleT           = useRef(0);
+      const shakeT            = useRef(0);
+
+      const syncUi = () => setUi({
+        phase: gamePhase.current, mode: gameMode.current,
+        score: score.current, lives: lives.current,
+        bombsSliced: bombsSliced.current, highScore: highScore.current,
+        stats: { ...stats.current },
+      });
+
+      /* ── MediaPipe init ──────────────────────────────────── */
+      useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        let camera = null, hands = null;
+
+        const init = async () => {
+          try {
+            hands = new window.Hands({
+              locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
+            });
+            hands.setOptions({
+              maxNumHands: 2, modelComplexity: 1,
+              minDetectionConfidence: 0.5, minTrackingConfidence: 0.5,
+            });
+
+            hands.onResults(results => {
+              setIsReady(true);
+              const vw = video.videoWidth || 640;
+              const vh = video.videoHeight || 480;
+              const wRatio = window.innerWidth / window.innerHeight;
+              const vRatio = vw / vh;
+              let dW = window.innerWidth, dH = window.innerHeight, oX = 0, oY = 0;
+              if (wRatio > vRatio) { dH = window.innerWidth / vRatio; oY = (window.innerHeight - dH) / 2; }
+              else                 { dW = window.innerHeight * vRatio; oX = (window.innerWidth - dW)  / 2; }
+
+              const detected = results.multiHandLandmarks || [];
+              for (let h = 0; h < 2; h++) {
+                if (detected[h]) {
+                  const raw = detected[h][8]; // index fingertip
+                  const x = (1 - raw.x) * dW + oX;
+                  const y = raw.y * dH + oY;
+                  trail.current[h].push({ x, y });
+                  if (trail.current[h].length > 12) trail.current[h].shift();
+                  lastDetTimes.current[h] = Date.now();
+                } else {
+                  if (trail.current[h].length > 0) trail.current[h].shift();
+                }
+              }
+            });
+
+            camera = new window.Camera(video, {
+              onFrame: async () => { if (video.readyState >= 2) await hands.send({ image: video }); },
+              width: 640, height: 480,
+            });
+            await camera.start();
+          } catch (err) {
+            console.error('Camera/MediaPipe error:', err);
+            setCamErr(true);
+          }
+        };
+
+        init();
+        return () => { if (camera) camera.stop(); if (hands) hands.close(); };
+      }, []);
+
+      /* ── Game loop ───────────────────────────────────────── */
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // ── spawn helpers ──
+        const spawnFruit = (isIdle = false) => {
+          let type = 'watermelon';
+          const r = Math.random();
+          if (isIdle) {
+            const basic = ['watermelon','orange','apple','banana','lemon','pineapple','mango','strawberry','peach','grapes','kiwi','cherry','blueberry'];
+            type = basic[Math.floor(Math.random() * basic.length)];
+          } else {
+            if (gameMode.current !== 'zen' && r < 0.125) type = 'bomb';
+            else if (r < 0.155) type = 'star';
+            else if (r < 0.175) type = 'ice';
+            else if (r < 0.195) type = 'diamond';
+            else if (r < 0.225) type = 'cherry';
+            else {
+              const basic = ['watermelon','orange','apple','banana','lemon','pineapple','mango','strawberry','peach','grapes','kiwi','blueberry'];
+              type = basic[Math.floor(Math.random() * basic.length)];
+            }
+          }
+          let radius = 40 + Math.random() * 20;
+          let vyBase = isIdle ? -15 : -20;
+          if (score.current > 50 && !isIdle) vyBase = -24;
+          let spd = 1;
+          if (type === 'strawberry' || type === 'blueberry') { radius = 30; spd = 1.2; }
+          else if (type === 'cherry')  { radius = 28; spd = 1.5; }
+          else if (type === 'pineapple') radius = 50 + Math.random() * 20;
+          else if (type === 'star' || type === 'ice' || type === 'diamond') radius = 45;
+          else if (type === 'bomb') radius = 50;
+
+          const x = window.innerWidth * 0.2 + Math.random() * (window.innerWidth * 0.6);
+          const y = window.innerHeight + radius + 10;
+          const vx = (((window.innerWidth/2) - x) * 0.005 + (Math.random()*4-2)) * spd;
+          const vy = (vyBase + (Math.random()*4-2)) * spd;
+          const rotSpd = type==='star' ? 0.3+Math.random()*0.2 : (Math.random()-0.5)*0.2;
+          fruits.current.push({
+            id: Math.random(), x, y, vx, vy, radius,
+            rotation: Math.random()*Math.PI*2, rotSpd, type,
+            sliced: false, opacity: 1, spawnTime: Date.now(),
+          });
+        };
+
+        const spawnParticles = (x, y, type) => {
+          let count = 12 + Math.random() * 6;
+          if (type === 'star') count = 40;
+          const cols = colors[type] || ['#fff'];
+          for (let i = 0; i < count; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const spd = (type==='star' ? 4 : 2) + Math.random() * 8;
+            particles.current.push({
+              x, y, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
+              radius: 2+Math.random()*6, color: cols[Math.floor(Math.random()*cols.length)],
+              opacity: 1, maxLife: 30+Math.random()*20,
+            });
+          }
+        };
+
+        const spawnExplosion = (x, y) => {
+          for (let i = 0; i < 40; i++) {
+            const ang = Math.random()*Math.PI*2, spd = 5+Math.random()*15;
+            particles.current.push({
+              x, y, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd,
+              radius: 4+Math.random()*10, color: colors.bomb[Math.floor(Math.random()*colors.bomb.length)],
+              opacity: 1, maxLife: 40+Math.random()*20,
+            });
+          }
+        };
+
+        const endGame = () => { gamePhase.current = 'gameover'; syncUi(); };
+
+        // ── main loop ──
+        const loop = () => {
+          // resize
+          if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+          }
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          // arcade timeout
+          if (gamePhase.current === 'playing' && gameMode.current === 'arcade') {
+            if (Date.now() - arcadeStart.current >= 60000) endGame();
+          }
+
+          ctx.save();
+          if (shakeT.current > 0) { ctx.translate(Math.random()*10-5, Math.random()*10-5); shakeT.current--; }
+
+          // ── fever vignette ──
+          if (fever.current && gamePhase.current === 'playing') {
+            feverT.current--;
+            if (feverT.current <= 0) fever.current = false;
+            const pulse = Math.abs(Math.sin(Date.now()/150))*0.3 + 0.1;
+            const vg = ctx.createRadialGradient(canvas.width/2, canvas.height/2, canvas.height/3, canvas.width/2, canvas.height/2, canvas.width);
+            vg.addColorStop(0, 'rgba(255,150,0,0)');
+            vg.addColorStop(1, `rgba(255,100,0,${pulse})`);
+            ctx.fillStyle = vg; ctx.fillRect(0,0,canvas.width,canvas.height);
+            ctx.font = 'bold 50px "Press Start 2P"';
+            ctx.fillStyle = `rgba(255,200,0,${Math.abs(Math.sin(Date.now()/100))*0.5+0.5})`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+            ctx.fillText('FEVER!', canvas.width/2, 20);
+          }
+
+          // ── juice stains ──
+          for (const s of stains.current) {
+            ctx.globalAlpha = Math.max(0, s.opacity);
+            ctx.fillStyle = s.color;
+            ctx.beginPath(); ctx.arc(s.x, s.y, s.radius, 0, Math.PI*2); ctx.fill();
+            ctx.globalAlpha = 1; s.opacity -= 0.003;
+          }
+          stains.current = stains.current.filter(s => s.opacity > 0);
+
+          // ── bomb screen flash ──
+          if (bombFlashT.current > 0) {
+            ctx.fillStyle = `rgba(255,0,0,${bombFlashT.current/30})`;
+            ctx.fillRect(0,0,canvas.width,canvas.height); bombFlashT.current--;
+          }
+
+          // ── spawning ──
+          if (gamePhase.current === 'idle') {
+            if (Date.now() - lastSpawnT.current > 1500) { lastSpawnT.current = Date.now(); spawnFruit(true); }
+          } else if (gamePhase.current === 'playing') {
+            let base = 2000;
+            if (score.current > 50) base = 1200;
+            else if (score.current > 25) base = 1400;
+            else if (score.current > 10) base = 1700;
+            spawnInterval.current = fever.current ? base*0.6 : base;
+            if (Date.now() - lastSpawnT.current > spawnInterval.current) {
+              lastSpawnT.current = Date.now();
+              let count = 1;
+              if (score.current > 50) count = Math.random()<0.5 ? 3 : 2;
+              else if (score.current > 25) count = Math.floor(Math.random()*3)+1;
+              else if (score.current > 10) count = Math.floor(Math.random()*2)+1;
+              for (let i = 0; i < count; i++) spawnFruit(false);
+            }
+          }
+
+          // ── slicing (both hands) ──
+          if (gamePhase.current === 'playing' && !freezeActive.current) {
+            trail.current.forEach(handTrail => {
+              const tLen = handTrail.length;
+              if (tLen < 2) return;
+              const p1 = handTrail[tLen-2], p2 = handTrail[tLen-1];
+              fruits.current.forEach(f => {
+                if (!f.sliced && lineCircleIntersection(p1.x,p1.y,p2.x,p2.y,f.x,f.y,f.radius*1.2)) {
+                  if (f.type === 'bomb') {
+                    stats.current.bombsHit++; bombsSliced.current++;
+                    spawnExplosion(f.x, f.y); bombFlashT.current = 30; shakeT.current = 20;
+                    if (bombsSliced.current >= 5) { endGame(); }
+                    else if (gameMode.current === 'zen')    { score.current = Math.max(0, score.current-5); }
+                    else if (gameMode.current === 'arcade') { score.current = Math.max(0, score.current-5); }
+                    else { lives.current--; if (lives.current <= 0) endGame(); }
+                    syncUi();
+                  } else {
+                    stats.current.sliced++;
+                    let pts = 1;
+                    if (['pineapple','mango','grapes'].includes(f.type)) pts = 2;
+                    if (f.type === 'cherry')  pts = 3;
+                    if (f.type === 'star')    pts = 10;
+                    if (f.type === 'ice')     { pts = 5; freezeActive.current = true; freezeT.current = 180; }
+                    if (f.type === 'diamond') { pts = 5; doubleActive.current = true; doubleT.current = 600; }
+
+                    const now = Date.now();
+                    if (now - lastSliceT.current > 1500) combo.current = 0;
+                    combo.current++; lastSliceT.current = now;
+                    if (combo.current > stats.current.maxCombo) stats.current.maxCombo = combo.current;
+                    if (combo.current >= 5) { fever.current = true; feverT.current = 120; }
+                    else if (fever.current) feverT.current = 120;
+
+                    let multi = Math.max(1, combo.current-1);
+                    if (doubleActive.current) multi *= 2;
+                    if (fever.current) multi *= 3;
+                    const gained = pts * multi;
+                    score.current += gained;
+                    if (score.current > highScore.current) {
+                      highScore.current = score.current;
+                      localStorage.setItem('fruitNinjaHS', String(highScore.current));
+                    }
+                    syncUi();
+
+                    const stainCol = (colors[f.type] || ['#fff'])[0];
+                    stains.current.push({ x:f.x, y:f.y, radius:20+Math.random()*30, color:stainCol, opacity:0.6 });
+                    if (stains.current.length > 20) stains.current.shift();
+                    flashes.current.push({ x:f.x, y:f.y, radius:0, maxRadius:f.radius*2, life:10 });
+
+                    if (f.type === 'cherry')
+                      floatTexts.current.push({ x:f.x, y:f.y-30, text:'LUCKY!', life:60, maxLife:60, color:'#FFD700' });
+                    if (combo.current >= 3)
+                      floatTexts.current.push({ x:f.x, y:f.y, text:`COMBO x${combo.current}!`, life:60, maxLife:60, color: fever.current ? '#ff6600' : '#ffcc00' });
+                    else if (gained > 1)
+                      floatTexts.current.push({ x:f.x, y:f.y, text:`+${gained}`, life:40, maxLife:40, color:'#fff' });
+
+                    spawnParticles(f.x, f.y, f.type);
+                  }
+                  f.sliced = true;
+                  f.sliceAngle = Math.atan2(p2.y-p1.y, p2.x-p1.x);
+                  f.h1x=0; f.h1y=0; f.h2x=0; f.h2y=0;
+                  f.h1vx=-4; f.h1vy=-8; f.h2vx=4; f.h2vy=8;
+                }
+              });
+            });
+          }
+
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+          // ── draw fruits ──
+          for (let i = fruits.current.length-1; i >= 0; i--) {
+            const f = fruits.current[i];
+            const emoji = emojis[f.type];
+            const size  = f.radius * 2.2;
+            ctx.font = `${size}px sans-serif`;
+
+            if (!f.sliced) {
+              ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rotation);
+              const gCol = fruitGlow[f.type];
+              if (gCol) {
+                const gr = ctx.createRadialGradient(0,0,0,0,0,f.radius*1.5);
+                gr.addColorStop(0, gCol+'60'); gr.addColorStop(1, gCol+'00');
+                ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(0,0,f.radius*1.5,0,Math.PI*2); ctx.fill();
+              }
+              ctx.shadowBlur = 20; ctx.shadowColor = gCol || 'transparent';
+              ctx.fillText(emoji, 0, 0); ctx.shadowBlur = 0; ctx.restore();
+
+              if (gamePhase.current !== 'gameover') {
+                if (!freezeActive.current) { f.x+=f.vx; f.y+=f.vy; f.vy+=0.4; f.rotation+=f.rotSpd; }
+                if (f.y > canvas.height + f.radius*2) {
+                  if (gamePhase.current==='playing' && !['bomb','star','ice','diamond'].includes(f.type)) {
+                    stats.current.missed++;
+                    if (gameMode.current==='classic') {
+                      lives.current--; shakeT.current = 8;
+                      if (lives.current <= 0) endGame(); else syncUi();
+                    }
+                  }
+                  fruits.current.splice(i, 1);
+                }
+              }
+            } else {
+              ctx.globalAlpha = f.opacity; ctx.save(); ctx.translate(f.x,f.y); ctx.rotate(f.sliceAngle||0);
+              ctx.save(); ctx.beginPath(); ctx.rect(-size*2,-size*2,size*4,size*2); ctx.clip();
+              ctx.translate(f.h1x||0,f.h1y||0); ctx.rotate(f.rotation-(f.sliceAngle||0)); ctx.fillText(emoji,0,0); ctx.restore();
+              ctx.save(); ctx.beginPath(); ctx.rect(-size*2,0,size*4,size*2); ctx.clip();
+              ctx.translate(f.h2x||0,f.h2y||0); ctx.rotate(f.rotation-(f.sliceAngle||0)); ctx.fillText(emoji,0,0); ctx.restore();
+              ctx.restore(); ctx.globalAlpha = 1;
+
+              if (gamePhase.current === 'playing') {
+                if (!freezeActive.current) {
+                  f.x+=f.vx; f.y+=f.vy; f.vy+=0.4; f.rotation+=f.rotSpd;
+                  f.h1x=(f.h1x||0)+(f.h1vx||0); f.h1y=(f.h1y||0)+(f.h1vy||0);
+                  f.h2x=(f.h2x||0)+(f.h2vx||0); f.h2y=(f.h2y||0)+(f.h2vy||0);
+                }
+                f.opacity -= 0.02; if (f.opacity <= 0) fruits.current.splice(i,1);
+              }
+            }
+          }
+
+          // ── slice flashes ──
+          for (let i = flashes.current.length-1; i >= 0; i--) {
+            const f = flashes.current[i];
+            ctx.beginPath(); ctx.arc(f.x,f.y,f.radius,0,Math.PI*2);
+            ctx.fillStyle = `rgba(255,255,255,${f.life/10})`; ctx.fill();
+            f.radius += (f.maxRadius-f.radius)*0.2; f.life--;
+            if (f.life <= 0) flashes.current.splice(i,1);
+          }
+
+          // ── particles ──
+          for (let i = particles.current.length-1; i >= 0; i--) {
+            const p = particles.current[i];
+            ctx.globalAlpha = p.opacity; ctx.fillStyle = p.color;
+            ctx.beginPath(); ctx.arc(p.x,p.y,p.radius,0,Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
+            if (gamePhase.current==='playing' && !freezeActive.current) {
+              p.x+=p.vx; p.y+=p.vy; p.vy+=0.3; p.opacity-=1/p.maxLife;
+              if (p.opacity <= 0) particles.current.splice(i,1);
+            }
+          }
+
+          // ── freeze overlay ──
+          if (freezeActive.current) {
+            freezeT.current--;
+            if (freezeT.current <= 0) freezeActive.current = false;
+            ctx.fillStyle = 'rgba(100,180,255,0.15)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+          }
+
+          // ── blade trail (both hands) ──
+          trail.current.forEach(ht => {
+            if (ht.length < 2) return;
+            // sparkle dots
+            for (let i = 1; i < ht.length; i++) {
+              if (i % 2 === 0) {
+                const p = ht[i];
+                ctx.beginPath(); ctx.arc(p.x,p.y,4+Math.random()*4,0,Math.PI*2);
+                ctx.fillStyle='#fff'; ctx.shadowBlur=15; ctx.shadowColor='#FFD700'; ctx.fill();
+              }
+            }
+            // outer gold stroke
+            ctx.shadowBlur=20; ctx.shadowColor='#FF9900';
+            for (let i = 1; i < ht.length; i++) {
+              const f = i/ht.length;
+              ctx.beginPath(); ctx.moveTo(ht[i-1].x,ht[i-1].y); ctx.lineTo(ht[i].x,ht[i].y);
+              ctx.lineWidth=15*f; ctx.strokeStyle=`rgba(255,200,0,${f*0.8})`; ctx.lineCap='round'; ctx.stroke();
+            }
+            // inner white stroke
+            for (let i = 1; i < ht.length; i++) {
+              const f = i/ht.length;
+              ctx.beginPath(); ctx.moveTo(ht[i-1].x,ht[i-1].y); ctx.lineTo(ht[i].x,ht[i].y);
+              ctx.lineWidth=6*f; ctx.strokeStyle=`rgba(255,255,255,${f})`; ctx.lineCap='round'; ctx.stroke();
+            }
+            ctx.shadowBlur=0;
+          });
+
+          // ── floating texts ──
+          ctx.font = 'bold 40px "Boogaloo", sans-serif';
+          for (let i = floatTexts.current.length-1; i >= 0; i--) {
+            const t = floatTexts.current[i];
+            ctx.globalAlpha = t.life/t.maxLife; ctx.fillStyle = t.color;
+            ctx.strokeStyle='#000'; ctx.lineWidth=4;
+            ctx.strokeText(t.text,t.x,t.y); ctx.fillText(t.text,t.x,t.y); ctx.globalAlpha=1;
+            if (gamePhase.current==='playing') { t.y-=2; t.life--; if(t.life<=0) floatTexts.current.splice(i,1); }
+          }
+
+          // ── HUD canvas elements ──
+          if (gamePhase.current === 'playing') {
+            // combo bar
+            const mH = 8;
+            ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,canvas.height-mH,canvas.width,mH);
+            const cr = Math.min(1, combo.current/10);
+            if (cr > 0) {
+              const bg = ctx.createLinearGradient(0,0,canvas.width*cr,0);
+              bg.addColorStop(0,'#FF6600'); bg.addColorStop(1,'#FFCC00');
+              ctx.fillStyle = bg;
+              if (combo.current >= 10) { ctx.shadowBlur=10; ctx.shadowColor='#FFD700'; if(Math.floor(Date.now()/100)%2===0) ctx.fillStyle='#fff'; }
+              ctx.fillRect(0,canvas.height-mH,canvas.width*cr,mH); ctx.shadowBlur=0;
+            }
+            ctx.font='16px "Press Start 2P"'; ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+            ctx.shadowBlur=4; ctx.shadowColor='#000'; ctx.fillText('COMBO',10,canvas.height-mH-5); ctx.shadowBlur=0;
+
+            // double-points banner
+            let bY = 80;
+            if (doubleActive.current) {
+              doubleT.current--;
+              if (doubleT.current <= 0) doubleActive.current = false;
+              ctx.fillStyle='#FFD700'; ctx.font='24px "Press Start 2P"';
+              ctx.textAlign='center'; ctx.textBaseline='middle';
+              ctx.shadowBlur=10; ctx.shadowColor='#FFD700';
+              ctx.fillText('💎 2x POINTS', canvas.width/2, bY); ctx.shadowBlur=0;
+              const bW=200, fW=bW*(doubleT.current/600);
+              ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(canvas.width/2-bW/2,bY+20,bW,4);
+              ctx.fillStyle='#FFD700'; ctx.fillRect(canvas.width/2-bW/2,bY+20,fW,4);
+              bY += 60;
+            }
+            // freeze banner
+            if (freezeActive.current) {
+              ctx.fillStyle='#99CCFF'; ctx.font='24px "Press Start 2P"';
+              ctx.textAlign='center'; ctx.textBaseline='middle';
+              ctx.shadowBlur=10; ctx.shadowColor='#99CCFF';
+              ctx.fillText('🧊 TIME FREEZE',canvas.width/2,bY); ctx.shadowBlur=0;
+            }
+            // arcade timer
+            if (gameMode.current === 'arcade') {
+              const left = Math.max(0, 60000-(Date.now()-arcadeStart.current));
+              const secs = Math.ceil(left/1000);
+              const m = Math.floor(secs/60), s = secs%60;
+              const tStr = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+              ctx.textAlign='center'; ctx.textBaseline='top'; ctx.font='bold 40px "Press Start 2P"';
+              ctx.fillStyle = secs<=10 ? `rgba(255,0,0,${Math.abs(Math.sin(Date.now()/150))*0.5+0.5})` : '#fff';
+              ctx.shadowBlur=10; ctx.shadowColor='#000'; ctx.fillText(tStr,canvas.width/2,20); ctx.shadowBlur=0;
+            }
+          }
+
+          ctx.restore(); // end shake save
+
+          // trail fade when hand not detected
+          for (let h = 0; h < 2; h++) {
+            if (Date.now()-lastDetTimes.current[h] > 100 && trail.current[h].length > 0)
+              trail.current[h].shift();
+          }
+
+          reqRef.current = requestAnimationFrame(loop);
+        };
+
+        reqRef.current = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(reqRef.current);
+      }, []);
+
+      /* ── start game ──────────────────────────────────────── */
+      const startGame = mode => {
+        gameMode.current = mode; gamePhase.current = 'playing';
+        score.current = 0; lives.current = 3; combo.current = 0;
+        fruits.current=[]; particles.current=[]; floatTexts.current=[];
+        stains.current=[]; flashes.current=[]; trail.current=[[],[]];
+        lastSpawnT.current = Date.now();
+        fever.current=false; feverT.current=0;
+        freezeActive.current=false; freezeT.current=0;
+        doubleActive.current=false; doubleT.current=0; shakeT.current=0;
+        stats.current = { sliced:0, missed:0, maxCombo:0, bombsHit:0 };
+        bombsSliced.current = 0;
+        if (mode==='arcade') arcadeStart.current = Date.now();
+        syncUi();
+      };
+
+      /* ── render ──────────────────────────────────────────── */
+      const S = {  // shorthand style helper
+        abs: pos => ({ position:'absolute', ...pos }),
+        row: extra => ({ display:'flex', ...extra }),
+        col: extra => ({ display:'flex', flexDirection:'column', ...extra }),
+      };
+
+      return (
+        <div style={{position:'relative',width:'100vw',height:'100vh',overflow:'hidden',background:'#111',userSelect:'none',fontFamily:'Boogaloo, sans-serif'}}>
+
+          {/* Webcam */}
+          <video ref={videoRef} playsInline muted autoPlay
+            style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',transform:'scaleX(-1)',zIndex:0,opacity:0.6}} />
+
+          {/* Canvas (game rendering) */}
+          <canvas ref={canvasRef}
+            style={{position:'absolute',inset:0,width:'100%',height:'100%',zIndex:10,pointerEvents:'none'}} />
+
+          {/* React UI layer */}
+          <div style={{position:'absolute',inset:0,zIndex:20,pointerEvents:'none',padding:'24px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
+
+            {/* Top HUD */}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+
+              {/* Left: lives + bomb counter */}
+              <div style={{display:'flex',alignItems:'flex-start',gap:'6px'}}>
+                {ui.mode==='classic' && Array.from({length:3}).map((_,i) => (
+                  <span key={i} style={{fontSize:'36px',opacity:i<ui.lives?1:0.3,filter:i<ui.lives?'':'grayscale(1)'}}>❤️</span>
+                ))}
+                {ui.phase==='playing' && (
+                  <div style={{display:'flex',flexDirection:'column',alignItems:'flex-start',marginTop:'4px',marginLeft:'4px'}}>
+                    <div style={{display:'flex',gap:'4px',fontSize:'24px'}}>
+                      {Array.from({length:5}).map((_,i) => (
+                        <span key={i} style={{opacity:i<ui.bombsSliced?1:0.2}}>💣</span>
+                      ))}
+                    </div>
+                    <div style={{fontSize:'8px',color:'#fb923c',marginTop:'2px',fontFamily:'"Press Start 2P"'}}>
+                      BOMBS ({ui.bombsSliced}/5)
+                    </div>
+                  </div>
+                )}
+                {ui.mode!=='classic' && (
+                  <div style={{fontSize:'40px',color:'white',WebkitTextStroke:'1px #000',textShadow:'0 2px 6px rgba(0,0,0,0.8)'}}>
+                    SCORE: {ui.score}
+                  </div>
+                )}
+              </div>
+
+              {/* Centre: big score */}
+              <div style={{textAlign:'center',fontSize:'80px',fontWeight:'bold',color:'white',WebkitTextStroke:'2px #ff9900',lineHeight:1,textShadow:'0 4px 4px rgba(0,0,0,0.8)'}}>
+                {ui.mode==='classic' ? ui.score : ui.mode==='zen' ? 'ZEN' : ''}
+              </div>
+
+              {/* Right: high score */}
+              <div style={{textAlign:'right',fontSize:'26px',color:'white',fontFamily:'"Press Start 2P"',textShadow:'0 2px 4px rgba(0,0,0,0.8)'}}>
+                BEST: {ui.highScore}
+              </div>
+            </div>
+
+            {/* ── Idle / menu screen ── */}
+            {ui.phase==='idle' && (
+              <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'auto',background:'rgba(0,0,0,0.42)',backdropFilter:'blur(5px)'}}>
+                <h1 style={{fontSize:'clamp(54px,9vw,120px)',fontWeight:'bold',color:'white',WebkitTextStroke:'4px #ff3333',textShadow:'0 5px 20px rgba(0,0,0,0.9)',margin:'0 0 12px',textAlign:'center',lineHeight:1.1}}>
+                  AR FRUIT NINJA
+                </h1>
+                <p style={{fontSize:'clamp(11px,1.4vw,17px)',color:'white',fontFamily:'"Press Start 2P"',maxWidth:'580px',textAlign:'center',lineHeight:2.1,marginBottom:'36px',padding:'0 16px'}}>
+                  Hold your hand in front of the camera and raise your index finger to slice!
+                </p>
+
+                {camErr ? (
+                  <div style={{color:'#f87171',background:'rgba(0,0,0,0.85)',padding:'24px 32px',borderRadius:'16px',textAlign:'center',fontSize:'15px',fontFamily:'"Press Start 2P"',lineHeight:1.9}}>
+                    Camera access denied.<br/>Please enable camera permissions to play.
+                  </div>
+                ) : isReady ? (
+                  <div style={{display:'flex',gap:'22px',marginTop:'8px',flexWrap:'wrap',justifyContent:'center'}}>
+                    <button className="btn btn-classic" onClick={() => startGame('classic')}>CLASSIC</button>
+                    <button className="btn btn-zen"     onClick={() => startGame('zen')}>ZEN</button>
+                    <button className="btn btn-arcade"  onClick={() => startGame('arcade')}>ARCADE</button>
+                  </div>
+                ) : (
+                  <div style={{fontSize:'18px',color:'#facc15',fontFamily:'"Press Start 2P"',animation:'pulse 1.6s infinite'}}>
+                    Loading AI Models…
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Game-over screen ── */}
+            {ui.phase==='gameover' && (
+              <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'auto',background:'rgba(0,0,0,0.72)',backdropFilter:'blur(8px)'}}>
+                <h2 style={{fontSize:'clamp(54px,8vw,100px)',fontWeight:'bold',color:'#ef4444',WebkitTextStroke:'4px #880000',textShadow:'0 0 40px #ff0000',margin:'0 0 6px'}}>
+                  GAME OVER
+                </h2>
+                <div style={{fontSize:'52px',color:'white',WebkitTextStroke:'2px #ff9900',fontWeight:'bold',marginBottom:'30px'}}>
+                  SCORE: {ui.score}
+                </div>
+
+                {/* Stats grid */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'20px',marginBottom:'36px',width:'100%',maxWidth:'580px',padding:'0 16px'}}>
+                  {[
+                    {label:'FRUITS SLICED', value:ui.stats.sliced,    color:'white'},
+                    {label:'FRUITS MISSED', value:ui.stats.missed,    color:'white'},
+                    {label:'MAX COMBO',     value:ui.stats.maxCombo,  color:'white'},
+                    {label:'BEST SCORE',    value:ui.highScore,       color:'#ffcc00'},
+                  ].map(({label,value,color}) => (
+                    <div key={label} style={{background:'rgba(0,0,0,0.6)',padding:'16px',borderRadius:'12px',border:'1px solid rgba(255,255,255,0.2)',textAlign:'center'}}>
+                      <div style={{fontSize:'9px',color:'#9ca3af',fontFamily:'"Press Start 2P"',marginBottom:'10px',lineHeight:1.7}}>{label}</div>
+                      <div style={{fontSize:'46px',color,fontFamily:'Boogaloo'}}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <button className="btn btn-menu" onClick={() => { gamePhase.current='idle'; syncUi(); }}>
+                  MAIN MENU
+                </button>
+              </div>
+            )}
+
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Game />);
+  </script>
+</body>
+</html>
