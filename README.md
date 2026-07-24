@@ -89,6 +89,7 @@ Fruit-Ninja-AR/
 ├── LICENSE
 ├── index.html
 └── .gitignore
+
 ```
 
 Everything — the MediaPipe setup, React component, canvas game loop, particle system, and UI overlays — lives in one self-contained file for easy sharing and zero setup.
