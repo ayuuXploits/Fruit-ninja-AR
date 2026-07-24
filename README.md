@@ -20,7 +20,7 @@
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands-00A5E0?style=for-the-badge&logo=google&logoColor=white)](https://developers.google.com/mediapipe)
 [![Canvas](https://img.shields.io/badge/Rendering-Canvas_2D-FF6F00?style=for-the-badge)](.)
 
-[**🚀 Play It**](https://ayuuXploits.github.io/Fruit-Ninja-AR/) &nbsp;·&nbsp; [**🐛 Report Bug**](https://github.com/ayuuXploits/Fruit-Ninja-AR/issues/new?labels=bug&title=%5BBug%5D+) &nbsp;·&nbsp; [**✨ Request Feature**](https://github.com/ayuuXploits/Fruit-Ninja-AR/issues/new?labels=enhancement&title=%5BFeature%5D+)
+[**🚀 Play It**](https://ayuuXploits.github.io/Fruit-ninja-AR/) &nbsp;·&nbsp; [**🐛 Report Bug**](https://github.com/ayuuXploits/Fruit-Ninja-AR/issues/new?labels=bug&title=%5BBug%5D+) &nbsp;·&nbsp; [**✨ Request Feature**](https://github.com/ayuuXploits/Fruit-Ninja-AR/issues/new?labels=enhancement&title=%5BFeature%5D+)
 
 <br/>
 
