@@ -122,6 +122,7 @@ Or serve it locally (recommended, since some browsers restrict camera access on 
 
 ```bash
 npx serve .
+
 ```
 
 ### 3. Play
