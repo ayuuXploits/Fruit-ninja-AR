@@ -87,6 +87,7 @@ Fruit-Ninja-AR/
 ├── AR_fruit_ninja.html   # Entire game — markup, styles, game loop, and rendering
 ├── README.md
 ├── LICENSE
+├── index.html
 └── .gitignore
 ```
 
