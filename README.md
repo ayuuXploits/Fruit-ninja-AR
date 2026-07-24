@@ -108,6 +108,7 @@ Everything — the MediaPipe setup, React component, canvas game loop, particle 
 ```bash
 git clone https://github.com/ayuuXploits/Fruit-Ninja-AR.git
 cd Fruit-Ninja-AR
+
 ```
 
 ### 2. Run it
