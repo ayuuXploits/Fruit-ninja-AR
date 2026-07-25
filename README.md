@@ -120,6 +120,7 @@ No install step required — just open the file directly:
 ```bash
 open AR_fruit_ninja.html
 
+
 ```
 
 Or serve it locally (recommended, since some browsers restrict camera access on `file://` URLs):
